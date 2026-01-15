@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 class BalancedFaceDataset(Dataset):
-    def __init__(self, data_dir="cropped_dataset"):
+    def __init__(self, data_dir="dataset/cropped_dataset"):
 
         self.data_dir = Path(data_dir)
         self.samples = []
@@ -111,3 +111,21 @@ print("\nNext steps:")
 print("  1. Import this dataset in your training script")
 print("  2. Use with EfficientNet backbone")
 print("  3. Add FFT features + Grad-CAM visualization")
+
+import albumentations as A
+from albumentations.pytorch import ToTensorV2
+def get_transforms(train=True):
+    """Returns augmentation pipeline for inference or training"""
+    if train:
+        return A.Compose([
+            A.Resize(224, 224),
+            A.HorizontalFlip(p=0.5),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2()
+        ])
+    else:
+        return A.Compose([
+            A.Resize(224, 224),
+            A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+            ToTensorV2()
+        ])

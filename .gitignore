@@ -1,101 +1,53 @@
-# ==================== DATASET ====================
-# Don't push large dataset folders (too big for Git)
-cropped_dataset/
-raw_dataset/
-dataset/
-data/
-
-# ==================== MODEL OUTPUTS ====================
-# Trained model weights & checkpoints
-*.pth
-*.pt
-best_model.pth
-checkpoint*.pth
-model_weights/
-
-# Training logs & history
-training_history.json
-*.log
-logs/
-runs/
-
-# ==================== PYTHON ====================
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 
-# Virtual environments
-venv/
-env/
-ENV/
-.venv
+# PyTorch
+*.pth
+*.pt
+training_history.json
+confusion_matrix.png
+gradcam_result.png
+*.pkl
+torch_hub/
 
-# IDE settings
+# Logs/temp
+logs/
+*.log
+temp/
+.DS_Store
+.DS_Store
+
+# Environment
+.env
+.venv/
+venv/
+
+# IDE
 .vscode/
 .idea/
 *.swp
-*.swo
-*~
 
-# Jupyter notebooks
-.ipynb_checkpoints/
-*.ipynb
-
-# ==================== OS FILES ====================
-# macOS
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# Windows
+# OS
 Thumbs.db
-*.lnk
-desktop.ini
+ehthumbs.db
 
-# Linux
-.directory
+# Jupyter
+.ipynb_checkpoints/
 
-# ==================== TEMPORARY FILES ====================
-*.tmp
-*.temp
-*.cache
-.pytest_cache/
-.coverage
+# Docker
+.dockerignore
 
-# ==================== VISUALIZATION & OUTPUTS ====================
-# Grad-CAM outputs
-grad_cam_*.png
-heatmap_*.png
+# Dataset IMAGES ONLY (keep scripts)
+dataset/**/*.jpg
+dataset/**/*.png
+dataset/**/*.jpeg
+dataset/cropped_dataset/**/*.jpg
+dataset/cropped_dataset/**/*.png
+dataset/cropped_dataset/**/*.jpeg
+
+# Output images
 *.png
-*.jpg
-*.jpeg
-
-# Results & reports (optional - uncomment if you want to push them)
-# results/
-# metrics/
-
-# ==================== PROJECT-SPECIFIC ====================
-# Large pickle/numpy files
-*.pkl
-*.pickle
-*.npy
-*.npz
-
-# TensorBoard logs
-runs/
-
-# ==================== NOTES ====================
-# You SHOULD push:
-# - *.py (training scripts)
-# - *.tex (LaTeX report/presentation)
-# - *.md (README)
-# - requirements.txt
-# - .gitignore (this file)
-#
-# You SHOULD NOT push:
-# - cropped_dataset/ (600 images = ~200-500 MB)
-# - best_model.pth (model weights = ~50-100 MB)
-# - training_history.json (can regenerate)
-# - grad_cam outputs (can regenerate)
+!confusion_matrix.png  # Keep for report

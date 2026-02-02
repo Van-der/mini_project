@@ -59,3 +59,6 @@ dataset/fake_baseline/
 # Test images
 test_image*.jpg
 test_image*.png
+
+# Literature survey (local only)
+literature_survey.txt

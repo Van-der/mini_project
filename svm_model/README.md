@@ -49,6 +49,7 @@ Input Image (224×224×3)
 | `train_svm.py` | Feature extraction + SVM training |
 | `evaluate_svm.py` | Full evaluation with confusion matrix |
 | `predict_svm.py` | Single image prediction with visualization |
+| `gradcam_svm.py` | Grad-CAM visualization for explainability |
 | `svm_model.joblib` | Trained SVM classifier |
 | `scaler.joblib` | Feature scaler (StandardScaler) |
 | `feature_extractor.pth` | EfficientNet weights |
@@ -71,6 +72,11 @@ python evaluate_svm.py
 ### Predict on new image
 ```bash
 python predict_svm.py ../dataset/cropped_dataset/real/some_image.jpg
+```
+
+### Grad-CAM visualization
+```bash
+python gradcam_svm.py ../dataset/cropped_dataset/ai_gen/aigen_ai_00001.jpg
 ```
 
 ## 🔬 Why SVM?

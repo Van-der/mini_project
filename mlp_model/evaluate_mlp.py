@@ -1,19 +1,21 @@
 import torch
-import json
 import numpy as np
 from sklearn.metrics import classification_report, confusion_matrix
 import seaborn as sns
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+import sys
+sys.path.append('..')
+
 from augmentdatting import BalancedFaceDataset
-from train_model import DualBranchDeepfakeDetector
+from train_mlp import DualBranchDeepfakeDetector
 
 def main():
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {DEVICE}")
     
     # Load dataset & model
-    dataset = BalancedFaceDataset('dataset/cropped_dataset')
+    dataset = BalancedFaceDataset('../dataset/cropped_dataset')
     test_loader = torch.utils.data.DataLoader(dataset, batch_size=16, shuffle=False)
     
     model = DualBranchDeepfakeDetector().to(DEVICE)
@@ -41,11 +43,13 @@ def main():
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['Real', 'Deepfake', 'AI-Gen'],
                 yticklabels=['Real', 'Deepfake', 'AI-Gen'])
-    plt.title('Confusion Matrix (94.2% Val Acc)')
-    plt.savefig('confusion_matrix.png', dpi=300, bbox_inches='tight')
+    plt.title('MLP Confusion Matrix')
+    plt.xlabel('Predicted')
+    plt.ylabel('Actual')
+    plt.savefig('confusion_matrix_mlp.png', dpi=300, bbox_inches='tight')
     plt.show()
     
-    print("✅ Saved: confusion_matrix.png")
+    print("✅ Saved: confusion_matrix_mlp.png")
 
 if __name__ == '__main__':
     main()

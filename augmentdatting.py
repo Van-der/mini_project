@@ -3,9 +3,6 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from PIL import Image
 from pathlib import Path
-import os
-from mtcnn import MTCNN
-import cv2
 import numpy as np
 
 class BalancedFaceDataset(Dataset):
@@ -71,51 +68,12 @@ class BalancedFaceDataset(Dataset):
         ])
 
 
-# First verify dataset structure
-print("=== DATASET VERIFICATION ===\n")
-dataset = BalancedFaceDataset()
-
-# ADD THIS DEBUG
-print(f"Data dir: {dataset.data_dir}")
-print(f"Real folder: {dataset.data_dir / 'real'} exists? {(dataset.data_dir / 'real').exists()}")
-print(f"Files in real/: {len(list((dataset.data_dir / 'real').glob('*')))}")
-print(f"Files in deepfake/: {len(list((dataset.data_dir / 'deepfake').glob('*')))}")
-print(f"Files in ai_gen/: {len(list((dataset.data_dir / 'ai_gen').glob('*')))}")
-
-print(f"✓ Total samples: {len(dataset)}")
-
-
-real_count = sum(1 for _, label, _ in dataset.samples if label == 0)
-deepfake_count = sum(1 for _, label, _ in dataset.samples if label == 1)
-ai_gen_count = sum(1 for _, label, _ in dataset.samples if label == 2)
-
-print(f"✓ Breakdown: {real_count} real, {deepfake_count} deepfake, {ai_gen_count} ai_gen")
-
-if len(dataset) == 0:
-    print("\n❌ ERROR: No images found!")
-    print("Did you run setup_dataset_final.py first?")
-    exit(1)
-
-# Now create DataLoader for augmentation preview
-print("\n=== CREATING DATALOADER ===\n")
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0)
-
-# Test: Load one batch and show augmentation is working
-batch_images, batch_labels = next(iter(dataloader))
-print(f"✓ Batch shape: {batch_images.shape}")
-print(f"✓ Labels in batch: {batch_labels.tolist()}")
-print(f"✓ Augmentation pipeline working!")
-
-print("\n✅ Dataset ready for training!")
-print("\nNext steps:")
-print("  1. Import this dataset in your training script")
-print("  2. Use with EfficientNet backbone")
-print("  3. Add FFT features + Grad-CAM visualization")
-
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
+# get_transforms function for inference
 def get_transforms(train=True):
     """Returns augmentation pipeline for inference or training"""
+    import albumentations as A
+    from albumentations.pytorch import ToTensorV2
+    
     if train:
         return A.Compose([
             A.Resize(224, 224),
@@ -129,3 +87,39 @@ def get_transforms(train=True):
             A.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
             ToTensorV2()
         ])
+
+
+if __name__ == '__main__':
+    # Dataset verification (only runs when script is executed directly)
+    print("=== DATASET VERIFICATION ===\n")
+    dataset = BalancedFaceDataset()
+
+    print(f"Data dir: {dataset.data_dir}")
+    print(f"Real folder: {dataset.data_dir / 'real'} exists? {(dataset.data_dir / 'real').exists()}")
+    print(f"Files in real/: {len(list((dataset.data_dir / 'real').glob('*')))}")
+    print(f"Files in deepfake/: {len(list((dataset.data_dir / 'deepfake').glob('*')))}")
+    print(f"Files in ai_gen/: {len(list((dataset.data_dir / 'ai_gen').glob('*')))}")
+
+    print(f"✓ Total samples: {len(dataset)}")
+
+    real_count = sum(1 for _, label, _ in dataset.samples if label == 0)
+    deepfake_count = sum(1 for _, label, _ in dataset.samples if label == 1)
+    ai_gen_count = sum(1 for _, label, _ in dataset.samples if label == 2)
+
+    print(f"✓ Breakdown: {real_count} real, {deepfake_count} deepfake, {ai_gen_count} ai_gen")
+
+    if len(dataset) == 0:
+        print("\n❌ ERROR: No images found!")
+        print("Did you run setup_dataset_final.py first?")
+        exit(1)
+
+    # DataLoader test
+    print("\n=== CREATING DATALOADER ===\n")
+    dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=0)
+
+    batch_images, batch_labels = next(iter(dataloader))
+    print(f"✓ Batch shape: {batch_images.shape}")
+    print(f"✓ Labels in batch: {batch_labels.tolist()}")
+    print(f"✓ Augmentation pipeline working!")
+
+    print("\n✅ Dataset ready for training!")

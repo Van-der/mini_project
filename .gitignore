@@ -4,20 +4,25 @@ __pycache__/
 *$py.class
 *.so
 
-# PyTorch
+# PyTorch / ML Models
 *.pth
 *.pt
+*.pkl
+*.joblib
+*.npy
+torch_hub/
+
+# Training outputs
 training_history.json
 confusion_matrix.png
+confusion_matrix_*.png
 gradcam_result.png
-*.pkl
-torch_hub/
+prediction_result.png
 
 # Logs/temp
 logs/
 *.log
 temp/
-.DS_Store
 .DS_Store
 
 # Environment
@@ -47,7 +52,10 @@ dataset/**/*.jpeg
 dataset/cropped_dataset/**/*.jpg
 dataset/cropped_dataset/**/*.png
 dataset/cropped_dataset/**/*.jpeg
+dataset/downloaded_*/
+dataset/real_fulls/
+dataset/fake_baseline/
 
-# Output images
-*.png
-!confusion_matrix.png  # Keep for report
+# Test images
+test_image*.jpg
+test_image*.png

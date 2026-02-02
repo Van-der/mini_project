@@ -2,17 +2,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-import albumentations as A
-from albumentations.pytorch import ToTensorV2
 import numpy as np
 import json
 from tqdm import tqdm
-import os
-from efficientnet_pytorch import EfficientNet
-import matplotlib.pyplot as plt
+import sys
+sys.path.append('..')
 
-# Your existing imports + dataset
-from augmentdatting import BalancedFaceDataset  # Your dataset class
+from efficientnet_pytorch import EfficientNet
+from augmentdatting import BalancedFaceDataset
 
 class DualBranchDeepfakeDetector(nn.Module):
     def __init__(self, num_classes=3):
@@ -33,7 +30,7 @@ class DualBranchDeepfakeDetector(nn.Module):
             nn.AdaptiveAvgPool2d(1)
         )
         
-        # Fusion
+        # Fusion (MLP Classifier)
         self.classifier = nn.Sequential(
             nn.Linear(rgb_features + 64, 128),
             nn.ReLU(),
@@ -42,21 +39,14 @@ class DualBranchDeepfakeDetector(nn.Module):
         )
     
     def fft_transform(self, x):
-        # x: [B,3,H,W] -> [B,1,H,W]
-        fft = torch.fft.fft2(x[:,0,:,:].unsqueeze(1))  # Use first channel
+        fft = torch.fft.fft2(x[:,0,:,:].unsqueeze(1))
         magnitude = torch.abs(fft)
-        return magnitude  # [B,1,H,W] ✓
+        return magnitude
 
-    
     def forward(self, x):
-        # RGB: [B,3,H,W] -> [B,1280]
         rgb_features = self.rgb_backbone(x)
-        
-        # FFT: [B,3,H,W] -> [B,64]
         fft_features = self.fft_conv(self.fft_transform(x))
         fft_features = fft_features.view(fft_features.size(0), -1)
-        
-        # Fuse: [B,1280+64] -> [B,3]
         combined = torch.cat([rgb_features, fft_features], dim=1)
         return self.classifier(combined)
 
@@ -68,8 +58,8 @@ LR = 1e-4
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def main():
-    # Dataset (your existing class)
-    dataset = BalancedFaceDataset('dataset/cropped_dataset')
+    # Dataset
+    dataset = BalancedFaceDataset('../dataset/cropped_dataset')
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_ds, val_ds = torch.utils.data.random_split(dataset, [train_size, val_size])
@@ -77,8 +67,9 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, num_workers=2)
     val_loader = DataLoader(val_ds, batch_size=BATCH_SIZE, shuffle=False, num_workers=2)
     
-    # Class weights (real:300, deepfake:250, aigen:50)
-    class_weights = torch.tensor([1/300, 1/250, 1/50]).to(DEVICE)
+    # Class weights (adjust based on dataset)
+    class_counts = [300, 250, 250]  # real, deepfake, ai_gen
+    class_weights = torch.tensor([1/c for c in class_counts]).to(DEVICE)
     criterion = nn.CrossEntropyLoss(weight=class_weights)
     
     model = DualBranchDeepfakeDetector().to(DEVICE)

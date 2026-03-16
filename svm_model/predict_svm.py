@@ -65,12 +65,14 @@ def predict_image(image_path, skip_face_detection=False):
     
     # ============ 4. Load SVM & Predict ============
     print("🤖 Running SVM prediction...")
-    svm = joblib.load('svm_model.joblib')
+    svm    = joblib.load('svm_model.joblib')
     scaler = joblib.load('scaler.joblib')
-    
+    pca    = joblib.load('pca.joblib')    # added: must apply PCA (1344→100)
+
     features_scaled = scaler.transform(features)
-    pred_idx = svm.predict(features_scaled)[0]
-    probs = svm.predict_proba(features_scaled)[0]
+    features_pca    = pca.transform(features_scaled)   # added
+    pred_idx = svm.predict(features_pca)[0]
+    probs    = svm.predict_proba(features_pca)[0]
     
     classes = ['Real', 'Deepfake', 'AI-Gen']
     
@@ -116,7 +118,7 @@ def predict_image(image_path, skip_face_detection=False):
 if __name__ == '__main__':
     if len(sys.argv) < 2:
         print("Usage: python predict_svm.py <image_path>")
-        print("Example: python predict_svm.py ../dataset/cropped_dataset/ai_gen/aigen_ai_00000.jpg")
+        print("Example: python predict_svm.py ../dataset/cropped_dataset/ai_gen/aigen_ai_00000.jpg")#python predict_svm.py ../test_data/test_ai.jpg
         sys.exit(1)
     
     predict_image(sys.argv[1])

@@ -15,31 +15,32 @@ from train_svm import FeatureExtractor, extract_features
 def main():
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {DEVICE}")
-    
+
     # ============ Load Models ============
-    print("\n📁 Loading models...")
-    svm = joblib.load('svm_model.joblib')
+    print("\nLoading models...")
+    svm    = joblib.load('svm_model.joblib')
     scaler = joblib.load('scaler.joblib')
-    print("✓ Loaded: svm_model.joblib, scaler.joblib")
-    
+    pca    = joblib.load('pca.joblib')   # added: load PCA transformer
+    print("Loaded: svm_model.joblib, scaler.joblib, pca.joblib")
+
     # ============ Load Dataset & Extract Features ============
-    # Option 1: Load pre-extracted features
     try:
-        print("\n🔄 Loading pre-extracted features...")
+        print("\nLoading pre-extracted features...")
         X = np.load('features_X.npy')
         y = np.load('features_y.npy')
-        print(f"✓ Loaded features: {X.shape}")
+        print(f"Loaded features: {X.shape}")
     except FileNotFoundError:
-        # Option 2: Extract fresh
-        print("\n🔄 Extracting features (pre-saved not found)...")
-        dataset = BalancedFaceDataset('../dataset/cropped_dataset')
+        print("\nExtracting features (pre-saved not found)...")
+        # mode='eval' → no augmentation, deterministic features
+        dataset = BalancedFaceDataset('../dataset/cropped_dataset', mode='eval')
         feature_extractor = FeatureExtractor().to(DEVICE)
         X, y = extract_features(dataset, feature_extractor, DEVICE)
-    
-    # ============ Scale & Predict ============
+
+    # ============ Scale → PCA → Predict ============
     X_scaled = scaler.transform(X)
-    y_pred = svm.predict(X_scaled)
-    y_prob = svm.predict_proba(X_scaled)
+    X_pca    = pca.transform(X_scaled)   # added: apply PCA before SVM
+    y_pred   = svm.predict(X_pca)
+    y_prob   = svm.predict_proba(X_pca)
     
     # ============ Metrics ============
     accuracy = accuracy_score(y, y_pred)

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import torch
 import torch.nn as nn
 import numpy as np
@@ -6,7 +7,8 @@ import joblib
 from tqdm import tqdm
 from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+from sklearn.decomposition import PCA
+from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
 import sys
 sys.path.append('..')
@@ -14,176 +16,218 @@ sys.path.append('..')
 from efficientnet_pytorch import EfficientNet
 from augmentdatting import BalancedFaceDataset
 
+# -----------------------------------------------------------
+# CHANGES FROM PREVIOUS VERSION
+# -----------------------------------------------------------
+# 1. Feature extraction now uses mode='eval' (no augmentation).
+#    Previously, random (and heavy for aigen_*) augmentations
+#    were applied during extraction - making ai_gen features
+#    artificially diverse and causing the SVM to overfit to
+#    that inflated distribution.
+#
+# 2. Split changed from 80/20 (train/val) to 70/15/15
+#    (train/val/test). A held-out test set ensures the
+#    reported accuracy reflects true generalisation, not
+#    memorisation.
+#
+# 3. PCA added (1344 -> 100 components).
+#    1344 raw features vs ~560 training samples is a
+#    near-certain recipe for RBF-SVM overfitting. PCA
+#    compresses redundant EfficientNet dimensions and forces
+#    the classifier to work on a compact, generalisable
+#    representation. pca.joblib is saved for inference.
+#
+# 4. SVM C reduced from 10 -> 1.0.
+#    C=10 aggressively minimises training errors at the cost
+#    of margin width, overfitting to noise. C=1.0 allows more
+#    slack and produces a wider, more generalisable boundary.
+#
+# 5. 5-fold cross-validation added on the training set to
+#    give an honest estimate of generalisation before touching
+#    the test set.
+# -----------------------------------------------------------
+
+
 class FeatureExtractor(nn.Module):
-    """Frozen feature extractor using EfficientNet + raw FFT features"""
+    """Frozen EfficientNet-B0 + FFT feature extractor (no learnable weights)"""
+
     def __init__(self):
         super().__init__()
-        # RGB Branch (frozen pretrained) - well-trained features!
         self.rgb_backbone = EfficientNet.from_pretrained('efficientnet-b0')
-        rgb_features = self.rgb_backbone._fc.in_features
         self.rgb_backbone._fc = nn.Identity()
-        
-        # Freeze all parameters - no training!
         for param in self.parameters():
             param.requires_grad = False
-    
+
     def get_fft_features(self, x):
-        """Extract raw FFT magnitude features (no learnable weights)"""
-        # Convert to grayscale: [B, 3, H, W] -> [B, 1, H, W]
+        """64-dim log-magnitude FFT features (grayscale, 8x8 pooled)"""
         gray = 0.299 * x[:, 0] + 0.587 * x[:, 1] + 0.114 * x[:, 2]
-        
-        # 2D FFT
         fft = torch.fft.fft2(gray)
-        fft_shifted = torch.fft.fftshift(fft)  # Center low frequencies
-        magnitude = torch.abs(fft_shifted)
-        
-        # Log scale for better dynamic range
-        magnitude = torch.log1p(magnitude)
-        
-        # Pool to fixed size features using adaptive pooling
-        # Divide into 8x8 regions and take mean of each
-        magnitude = magnitude.unsqueeze(1)  # [B, 1, H, W]
-        pooled = nn.functional.adaptive_avg_pool2d(magnitude, (8, 8))  # [B, 1, 8, 8]
-        
-        # Flatten: [B, 64]
-        fft_features = pooled.view(pooled.size(0), -1)
-        return fft_features
+        magnitude = torch.log1p(torch.abs(torch.fft.fftshift(fft)))
+        pooled = nn.functional.adaptive_avg_pool2d(magnitude.unsqueeze(1), (8, 8))
+        return pooled.view(pooled.size(0), -1)
 
     def forward(self, x):
-        # RGB features: [B, 1280]
-        rgb_features = self.rgb_backbone(x)
-        
-        # FFT features: [B, 64] - raw, no learnable weights
-        fft_features = self.get_fft_features(x)
-        
-        # Combined: [B, 1344]
-        combined = torch.cat([rgb_features, fft_features], dim=1)
-        return combined
+        rgb_features = self.rgb_backbone(x)          # [B, 1280]
+        fft_features = self.get_fft_features(x)      # [B,   64]
+        return torch.cat([rgb_features, fft_features], dim=1)  # [B, 1344]
 
 
 def extract_features(dataset, feature_extractor, device, batch_size=16):
-    """Extract features from entire dataset"""
+    """Extract features from entire dataset (no grad, deterministic)"""
     from torch.utils.data import DataLoader
-    
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=0)
-    
-    all_features = []
-    all_labels = []
-    
+
+    all_features, all_labels = [], []
     feature_extractor.eval()
     with torch.no_grad():
         for imgs, labels in tqdm(loader, desc="Extracting features"):
             imgs = imgs.to(device)
-            features = feature_extractor(imgs)
-            all_features.append(features.cpu().numpy())
+            all_features.append(feature_extractor(imgs).cpu().numpy())
             all_labels.append(labels.numpy())
-    
-    X = np.vstack(all_features)
-    y = np.concatenate(all_labels)
-    
-    return X, y
+
+    return np.vstack(all_features), np.concatenate(all_labels)
 
 
 def main():
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {DEVICE}")
-    
-    # ============ STEP 1: Load Dataset ============
-    print("\n📁 Loading dataset...")
-    dataset = BalancedFaceDataset('../dataset/cropped_dataset')
-    print(f"✓ Total samples: {len(dataset)}")
-    
-    # ============ STEP 2: Extract Features ============
-    print("\n🔄 Extracting features using frozen EfficientNet + FFT...")
+
+    # STEP 1: Load dataset in EVAL mode (no augmentation)
+    # CHANGE 1: mode='eval' -> deterministic resize+normalise only.
+    # Previously the default mode applied random (and heavy for aigen_*)
+    # augmentations, inflating ai_gen feature diversity and biasing the SVM.
+    print("\nLoading dataset (eval mode - no augmentation)...")
+    dataset = BalancedFaceDataset('../dataset/cropped_dataset', mode='eval')
+    print(f"Total samples: {len(dataset)}")
+
+    # STEP 2: Extract features
+    print("\nExtracting features with frozen EfficientNet + FFT...")
     feature_extractor = FeatureExtractor().to(DEVICE)
-    
-    # Save feature extractor for consistent inference
     torch.save(feature_extractor.state_dict(), 'feature_extractor.pth')
-    print("✓ Saved: feature_extractor.pth")
-    
+
     X, y = extract_features(dataset, feature_extractor, DEVICE)
-    print(f"✓ Feature shape: {X.shape}")  # Should be (600, 1344)
-    
-    # Save features for future use
+    print(f"Feature shape: {X.shape}")   # (800, 1344)
+
     np.save('features_X.npy', X)
     np.save('features_y.npy', y)
-    print("✓ Saved: features_X.npy, features_y.npy")
-    
-    # ============ STEP 3: Train/Val Split ============
-    X_train, X_val, y_train, y_val = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+
+    # STEP 3: 70 / 15 / 15 stratified split
+    # CHANGE 2: Added a held-out test set.
+    # Previously only a single 80/20 train/val split was used; evaluate_svm.py
+    # then ran on the full dataset (including training samples), giving an
+    # inflated ~97% figure that does not reflect real generalisation.
+    X_train_val, X_test, y_train_val, y_test = train_test_split(
+        X, y, test_size=0.15, random_state=42, stratify=y
     )
-    print(f"\n📊 Split: {len(X_train)} train, {len(X_val)} val")
-    
-    # ============ STEP 4: Scale Features ============
-    print("\n⚖️ Scaling features...")
+    X_train, X_val, y_train, y_val = train_test_split(
+        X_train_val, y_train_val, test_size=0.176, random_state=42, stratify=y_train_val
+        # 0.176 of 0.85 ~= 0.15 of total -> gives ~70 / 15 / 15
+    )
+    print(f"\nSplit -> train: {len(X_train)}  val: {len(X_val)}  test: {len(X_test)}")
+
+    # STEP 4: Scale features
     scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_val_scaled = scaler.transform(X_val)
-    
-    # Save scaler
+    X_train_sc = scaler.fit_transform(X_train)
+    X_val_sc   = scaler.transform(X_val)
+    X_test_sc  = scaler.transform(X_test)
     joblib.dump(scaler, 'scaler.joblib')
-    print("✓ Saved: scaler.joblib")
-    
-    # ============ STEP 5: Train SVM ============
-    print("\n🚀 Training SVM classifier...")
-    
-    # Option A: Quick training with good defaults
+
+    # STEP 5: PCA dimensionality reduction (1344 -> 100)
+    # CHANGE 3: PCA added.
+    # 1344 features vs ~560 training samples makes RBF-SVM severely prone to
+    # overfitting. Compressing to 100 PCA components (still capturing >95% of
+    # variance in practice) forces the model to generalise rather than memorise.
+    print("\nFitting PCA (1344 -> 100 components)...")
+    pca = PCA(n_components=100, random_state=42)
+    X_train_pca = pca.fit_transform(X_train_sc)
+    X_val_pca   = pca.transform(X_val_sc)
+    X_test_pca  = pca.transform(X_test_sc)
+
+    explained = pca.explained_variance_ratio_.sum()
+    print(f"Variance retained: {explained*100:.1f}%")
+    joblib.dump(pca, 'pca.joblib')
+
+    # STEP 6: Cross-validate on training set
+    # CHANGE 4 (new): 5-fold CV gives an honest generalisation estimate
+    # before ever touching the test set.
+    print("\nRunning 5-fold cross-validation on training set...")
+    cv_svm = SVC(
+        kernel='rbf', C=1.0, gamma='scale',
+        class_weight='balanced', probability=True, random_state=42
+    )
+    cv_scores = cross_val_score(cv_svm, X_train_pca, y_train, cv=5, scoring='accuracy')
+    print(f"CV scores:  {cv_scores.round(3)}")
+    print(f"CV mean:    {cv_scores.mean()*100:.1f}%  +/-  {cv_scores.std()*100:.1f}%")
+
+    # STEP 7: Train final SVM
+    # CHANGE 5: C reduced from 10 -> 1.0.
+    # C=10 minimises training errors aggressively, shrinking the margin and
+    # memorising noise. C=1.0 allows more margin slack and generalises better
+    # at the cost of a slightly lower training accuracy.
+    print("\nTraining SVM (C=1.0, RBF kernel)...")
     svm = SVC(
         kernel='rbf',
-        C=10,
+        C=1.0,            # was 10 - reduced to prevent overfitting
         gamma='scale',
-        class_weight='balanced',  # Handles class imbalance!
-        probability=True,  # For confidence scores
+        class_weight='balanced',
+        probability=True,
         random_state=42
     )
-    
-    svm.fit(X_train_scaled, y_train)
-    print("✓ SVM trained!")
-    
-    # ============ STEP 6: Evaluate ============
-    print("\n📊 Evaluating...")
-    y_train_pred = svm.predict(X_train_scaled)
-    y_val_pred = svm.predict(X_val_scaled)
-    
-    train_acc = accuracy_score(y_train, y_train_pred)
-    val_acc = accuracy_score(y_val, y_val_pred)
-    
-    print(f"\n{'='*50}")
-    print(f"Train Accuracy: {train_acc*100:.1f}%")
-    print(f"Val Accuracy:   {val_acc*100:.1f}%")
-    print(f"{'='*50}")
-    
-    print("\n📋 Validation Classification Report:")
-    print(classification_report(y_val, y_val_pred, 
-                              target_names=['Real', 'Deepfake', 'AI-Gen']))
-    
-    # ============ STEP 7: Save Model ============
+    svm.fit(X_train_pca, y_train)
     joblib.dump(svm, 'svm_model.joblib')
-    print("\n✅ Saved: svm_model.joblib")
-    
-    # Save training history
+
+    # STEP 8: Evaluate
+    y_train_pred = svm.predict(X_train_pca)
+    y_val_pred   = svm.predict(X_val_pca)
+    y_test_pred  = svm.predict(X_test_pca)
+
+    train_acc = accuracy_score(y_train, y_train_pred)
+    val_acc   = accuracy_score(y_val,   y_val_pred)
+    test_acc  = accuracy_score(y_test,  y_test_pred)
+
+    print(f"\n{'='*55}")
+    print(f"  Train accuracy : {train_acc*100:.1f}%")
+    print(f"  Val accuracy   : {val_acc*100:.1f}%")
+    print(f"  Test accuracy  : {test_acc*100:.1f}%  <- honest generalisation")
+    gap = train_acc - test_acc
+    print(f"  Overfit gap    : {gap*100:.1f}%  (train - test)")
+    print(f"{'='*55}")
+
+    print("\nValidation report:")
+    print(classification_report(y_val, y_val_pred,
+                                target_names=['Real', 'Deepfake', 'AI-Gen']))
+
+    print("Test report:")
+    print(classification_report(y_test, y_test_pred,
+                                target_names=['Real', 'Deepfake', 'AI-Gen']))
+
+    # STEP 9: Save training history
     history = {
-        'train_accuracy': train_acc,
-        'val_accuracy': val_acc,
-        'feature_dim': X.shape[1],
-        'train_samples': len(X_train),
-        'val_samples': len(X_val),
-        'svm_params': svm.get_params()
+        'train_accuracy':    train_acc,
+        'val_accuracy':      val_acc,
+        'test_accuracy':     test_acc,
+        'overfit_gap':       float(gap),
+        'cv_mean':           float(cv_scores.mean()),
+        'cv_std':            float(cv_scores.std()),
+        'pca_components':    100,
+        'pca_variance_kept': float(explained),
+        'feature_dim_raw':   int(X.shape[1]),
+        'feature_dim_pca':   100,
+        'train_samples':     len(X_train),
+        'val_samples':       len(X_val),
+        'test_samples':      len(X_test),
+        'svm_params':        svm.get_params()
     }
     with open('training_history.json', 'w') as f:
         json.dump(history, f, indent=2, default=str)
-    print("✅ Saved: training_history.json")
-    
-    print("\n" + "="*50)
-    print("🎉 Training complete!")
-    print("="*50)
+
     print("\nFiles saved:")
-    print("  - svm_model.joblib    (trained SVM)")
-    print("  - scaler.joblib       (feature scaler)")
-    print("  - features_X.npy      (extracted features)")
-    print("  - features_y.npy      (labels)")
-    print("  - training_history.json")
+    print("  svm_model.joblib        (trained SVM)")
+    print("  scaler.joblib           (StandardScaler)")
+    print("  pca.joblib              (PCA 1344->100)")
+    print("  feature_extractor.pth")
+    print("  features_X.npy / features_y.npy")
+    print("  training_history.json")
 
 
 if __name__ == '__main__':

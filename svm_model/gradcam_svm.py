@@ -131,14 +131,16 @@ def predict_with_gradcam(image_path, skip_face_detection=False):
     
     svm = joblib.load('svm_model.joblib')
     scaler = joblib.load('scaler.joblib')
-    
+    pca = joblib.load('pca.joblib')    # added: must apply PCA (1344→100)
+
     # ============ 4. Extract Features & Predict ============
     with torch.no_grad():
         features = feature_extractor(img_tensor).cpu().numpy()
-    
+
     features_scaled = scaler.transform(features)
-    pred_idx = svm.predict(features_scaled)[0]
-    probs = svm.predict_proba(features_scaled)[0]
+    features_pca    = pca.transform(features_scaled)   # added
+    pred_idx = svm.predict(features_pca)[0]
+    probs    = svm.predict_proba(features_pca)[0]
     
     classes = ['Real', 'Deepfake', 'AI-Gen']
     

@@ -60,5 +60,12 @@ dataset/fake_baseline/
 test_image*.jpg
 test_image*.png
 
+# Test data folder
+test_data/
+
+# Loose output images in svm_model (keep confusion matrix for README)
+svm_model/*.png
+!svm_model/confusion_matrix_svm.png
+
 # Literature survey (local only)
 literature_survey.txt

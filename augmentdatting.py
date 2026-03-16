@@ -6,40 +6,57 @@ from pathlib import Path
 import numpy as np
 
 class BalancedFaceDataset(Dataset):
-    def __init__(self, data_dir="dataset/cropped_dataset"):
-
+    def __init__(self, data_dir="dataset/cropped_dataset", mode='train'):
+        """
+        mode='train' : applies per-class augmentation (for MLP training)
+        mode='eval'  : no augmentation — deterministic resize+normalize only
+                       (use this for SVM feature extraction)
+        """
         self.data_dir = Path(data_dir)
+        self.mode = mode
         self.samples = []
-        
+
         # Load all samples with their paths and labels
         # 0=real, 1=deepfake, 2=ai_gen
         label_map = {"real": 0, "deepfake": 1, "ai_gen": 2}
-        
+
         for label_name, label_id in label_map.items():
             folder_path = self.data_dir / label_name
             if not folder_path.exists():
                 print(f"⚠️  Folder not found: {folder_path}")
                 continue
-            
+
             for img_path in folder_path.glob("*"):
                 if img_path.suffix.lower() in ['.jpg', '.jpeg', '.png', '.JPG', '.PNG']:
                     self.samples.append((str(img_path), label_id, img_path.name))
-    
+
     def __len__(self):
         return len(self.samples)
-    
+
     def __getitem__(self, idx):
         img_path, label, filename = self.samples[idx]
         image = Image.open(img_path).convert('RGB')
-        
-        # Check if filename starts with aigen_ → HEAVY augmentation
-        if filename.startswith("aigen_"):
+
+        if self.mode == 'eval':
+            # No augmentation: deterministic features for SVM/evaluation
+            transform = self.get_inference_transform()
+        elif filename.startswith("aigen_"):
+            # HEAVY augmentation for minority class during MLP training
             transform = self.get_heavy_transform()
         else:
             transform = self.get_light_transform()
-        
+
         image = transform(image)
         return image, label
+
+    @staticmethod
+    def get_inference_transform():
+        """No augmentation — used for SVM feature extraction and evaluation"""
+        return transforms.Compose([
+            transforms.Resize((224, 224)),
+            transforms.ToTensor(),
+            transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+        ])
     
     @staticmethod
     def get_light_transform():

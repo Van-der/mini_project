@@ -2,7 +2,7 @@
 
 A **3-class image classifier** that distinguishes between **Real**, **Deepfake**, and **AI-Generated** faces using a dual-branch feature extractor combining spatial (RGB) and frequency (FFT) information, followed by an SVM classifier.
 
-![Confusion Matrix](svm_model/confusion_matrix_svm.png)
+![Confusion Matrix](confusion_matrix_svm.png)
 
 ---
 

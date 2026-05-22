@@ -1,30 +1,17 @@
 """
 Deepfake Detection — Streamlit App
 
-Setup:
-    pip install streamlit
-
 Run:
-    cd svm_model
     streamlit run app.py
-
-Dependencies (already in requirements.txt):
-    torch, efficientnet_pytorch, scikit-learn, joblib, opencv-python, Pillow, streamlit
 """
 
 import os
-import sys
 import tempfile
 import streamlit as st
 from PIL import Image
 
-# Ensure imports from svm_model/ work correctly
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from inference import predict_image, generate_gradcam
 
-# ---------------------------------------------------------------------------
-# Page config
-# ---------------------------------------------------------------------------
 st.set_page_config(page_title="Deepfake Detector", layout="wide")
 
 st.markdown("""
@@ -40,15 +27,11 @@ st.title("Deepfake & AI-Generated Face Detector")
 st.caption("3-class classifier: Real / Deepfake / AI-Generated  |  EfficientNet-B0 + SVM")
 st.divider()
 
-# ---------------------------------------------------------------------------
-# Section 1 — Upload
-# ---------------------------------------------------------------------------
 st.header("Upload Image")
 uploaded = st.file_uploader("Choose a face image", type=["jpg", "jpeg", "png"])
 
 if uploaded is not None:
 
-    # Save to a temporary file so inference functions can read it by path
     suffix   = os.path.splitext(uploaded.name)[1]
     tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
     tmp_file.write(uploaded.read())
@@ -57,26 +40,20 @@ if uploaded is not None:
 
     st.divider()
 
-    # ---------------------------------------------------------------------------
-    # Section 2 — Results
-    # ---------------------------------------------------------------------------
     st.header("Model Results")
 
     col_left, col_right = st.columns(2)
 
-    # Left: uploaded image
     with col_left:
         st.subheader("Uploaded Image")
         st.image(Image.open(tmp_path), use_container_width=True)
 
-    # Right: prediction
     with col_right:
         st.subheader("Prediction")
         with st.spinner("Running classifier..."):
             try:
                 label, probs, confidence = predict_image(tmp_path)
 
-                # Predicted class + confidence
                 st.metric("Predicted Class", label)
                 st.metric("Confidence", f"{confidence * 100:.1f}%")
 
@@ -92,9 +69,6 @@ if uploaded is not None:
 
     st.divider()
 
-    # ---------------------------------------------------------------------------
-    # Explainability — Grad-CAM
-    # ---------------------------------------------------------------------------
     st.subheader("Explainability — Grad-CAM")
     st.caption("Highlighted regions show what the model focused on to make its decision.")
 
@@ -112,5 +86,4 @@ if uploaded is not None:
         except Exception as e:
             st.error(f"Grad-CAM failed: {e}")
 
-    # Clean up temp file
     os.unlink(tmp_path)

@@ -9,7 +9,6 @@ Models are loaded once on first call and reused for all subsequent calls.
 """
 
 import os
-import sys
 import torch
 import torch.nn as nn
 import numpy as np
@@ -18,8 +17,7 @@ import cv2
 from PIL import Image
 from torchvision import transforms
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from train_svm import FeatureExtractor
+from train import FeatureExtractor
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -55,7 +53,6 @@ def _load_models():
     _models['scaler']            = joblib.load(os.path.join(_MODEL_DIR, 'scaler.joblib'))
     _models['pca']               = joblib.load(os.path.join(_MODEL_DIR, 'pca.joblib'))
 
-    # GradCAM hooks are registered once onto the target layer
     _models['gradcam'] = _GradCAM(fe, fe.rgb_backbone._conv_head)
 
 
@@ -63,14 +60,6 @@ def _load_models():
 # Shared preprocessing helper
 # ---------------------------------------------------------------------------
 def _preprocess(image_path):
-    """
-    Load image, attempt MTCNN face detection, resize to 224x224.
-
-    Returns:
-        img_cropped : np.ndarray (224, 224, 3) uint8 — face crop (or full image)
-        img_tensor  : torch.Tensor (1, 3, 224, 224) — normalised tensor
-        face_found  : bool
-    """
     device  = _models['device']
     img_pil = Image.open(image_path).convert('RGB')
     img_np  = np.array(img_pil)
@@ -89,7 +78,7 @@ def _preprocess(image_path):
             img_np     = img_np[y1:y2, x1:x2]
             face_found = True
     except Exception:
-        pass  # MTCNN not installed or no face — fall back to full image
+        pass
 
     img_cropped = cv2.resize(img_np, (224, 224))
     img_tensor  = _TRANSFORM(Image.fromarray(img_cropped)).unsqueeze(0).to(device)
@@ -103,9 +92,6 @@ def _preprocess(image_path):
 def predict_image(image_path):
     """
     Run SVM prediction pipeline on an image.
-
-    Args:
-        image_path : str — path to image file (jpg/png)
 
     Returns:
         label      : str  — predicted class, one of ['Real', 'Deepfake', 'AI-Gen']
@@ -133,13 +119,9 @@ def predict_image(image_path):
 
 
 # ---------------------------------------------------------------------------
-# Grad-CAM helper class  (instantiated once in _load_models)
+# Grad-CAM helper class
 # ---------------------------------------------------------------------------
 class _GradCAM:
-    """
-    Grad-CAM using EfficientNet activations.
-    Hooks are registered on init and reused for every generate() call.
-    """
     def __init__(self, feature_extractor, target_layer):
         self.feature_extractor = feature_extractor
         self.gradients  = None
@@ -174,12 +156,8 @@ def generate_gradcam(image_path):
     """
     Generate Grad-CAM heatmap overlay for an image.
 
-    Args:
-        image_path : str — path to image file (jpg/png)
-
     Returns:
         overlay : np.ndarray (224, 224, 3) uint8 RGB
-                  Grad-CAM heatmap blended over the face crop.
     """
     _load_models()
 

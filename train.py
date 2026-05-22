@@ -10,42 +10,9 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 from sklearn.model_selection import train_test_split, cross_val_score
 from sklearn.metrics import classification_report, accuracy_score
-import sys
-sys.path.append('..')
 
 from efficientnet_pytorch import EfficientNet
-from augmentdatting import BalancedFaceDataset
-
-# -----------------------------------------------------------
-# CHANGES FROM PREVIOUS VERSION
-# -----------------------------------------------------------
-# 1. Feature extraction now uses mode='eval' (no augmentation).
-#    Previously, random (and heavy for aigen_*) augmentations
-#    were applied during extraction - making ai_gen features
-#    artificially diverse and causing the SVM to overfit to
-#    that inflated distribution.
-#
-# 2. Split changed from 80/20 (train/val) to 70/15/15
-#    (train/val/test). A held-out test set ensures the
-#    reported accuracy reflects true generalisation, not
-#    memorisation.
-#
-# 3. PCA added (1344 -> 100 components).
-#    1344 raw features vs ~560 training samples is a
-#    near-certain recipe for RBF-SVM overfitting. PCA
-#    compresses redundant EfficientNet dimensions and forces
-#    the classifier to work on a compact, generalisable
-#    representation. pca.joblib is saved for inference.
-#
-# 4. SVM C reduced from 10 -> 1.0.
-#    C=10 aggressively minimises training errors at the cost
-#    of margin width, overfitting to noise. C=1.0 allows more
-#    slack and produces a wider, more generalisable boundary.
-#
-# 5. 5-fold cross-validation added on the training set to
-#    give an honest estimate of generalisation before touching
-#    the test set.
-# -----------------------------------------------------------
+from dataset import BalancedFaceDataset
 
 
 class FeatureExtractor(nn.Module):
@@ -92,15 +59,10 @@ def main():
     DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {DEVICE}")
 
-    # STEP 1: Load dataset in EVAL mode (no augmentation)
-    # CHANGE 1: mode='eval' -> deterministic resize+normalise only.
-    # Previously the default mode applied random (and heavy for aigen_*)
-    # augmentations, inflating ai_gen feature diversity and biasing the SVM.
     print("\nLoading dataset (eval mode - no augmentation)...")
-    dataset = BalancedFaceDataset('../dataset/cropped_dataset', mode='eval')
+    dataset = BalancedFaceDataset('data/cropped_dataset', mode='eval')
     print(f"Total samples: {len(dataset)}")
 
-    # STEP 2: Extract features
     print("\nExtracting features with frozen EfficientNet + FFT...")
     feature_extractor = FeatureExtractor().to(DEVICE)
     torch.save(feature_extractor.state_dict(), 'feature_extractor.pth')
@@ -111,32 +73,21 @@ def main():
     np.save('features_X.npy', X)
     np.save('features_y.npy', y)
 
-    # STEP 3: 70 / 15 / 15 stratified split
-    # CHANGE 2: Added a held-out test set.
-    # Previously only a single 80/20 train/val split was used; evaluate_svm.py
-    # then ran on the full dataset (including training samples), giving an
-    # inflated ~97% figure that does not reflect real generalisation.
+    # 70 / 15 / 15 stratified split
     X_train_val, X_test, y_train_val, y_test = train_test_split(
         X, y, test_size=0.15, random_state=42, stratify=y
     )
     X_train, X_val, y_train, y_val = train_test_split(
         X_train_val, y_train_val, test_size=0.176, random_state=42, stratify=y_train_val
-        # 0.176 of 0.85 ~= 0.15 of total -> gives ~70 / 15 / 15
     )
     print(f"\nSplit -> train: {len(X_train)}  val: {len(X_val)}  test: {len(X_test)}")
 
-    # STEP 4: Scale features
     scaler = StandardScaler()
     X_train_sc = scaler.fit_transform(X_train)
     X_val_sc   = scaler.transform(X_val)
     X_test_sc  = scaler.transform(X_test)
     joblib.dump(scaler, 'scaler.joblib')
 
-    # STEP 5: PCA dimensionality reduction (1344 -> 100)
-    # CHANGE 3: PCA added.
-    # 1344 features vs ~560 training samples makes RBF-SVM severely prone to
-    # overfitting. Compressing to 100 PCA components (still capturing >95% of
-    # variance in practice) forces the model to generalise rather than memorise.
     print("\nFitting PCA (1344 -> 100 components)...")
     pca = PCA(n_components=100, random_state=42)
     X_train_pca = pca.fit_transform(X_train_sc)
@@ -147,9 +98,6 @@ def main():
     print(f"Variance retained: {explained*100:.1f}%")
     joblib.dump(pca, 'pca.joblib')
 
-    # STEP 6: Cross-validate on training set
-    # CHANGE 4 (new): 5-fold CV gives an honest generalisation estimate
-    # before ever touching the test set.
     print("\nRunning 5-fold cross-validation on training set...")
     cv_svm = SVC(
         kernel='rbf', C=1.0, gamma='scale',
@@ -159,24 +107,14 @@ def main():
     print(f"CV scores:  {cv_scores.round(3)}")
     print(f"CV mean:    {cv_scores.mean()*100:.1f}%  +/-  {cv_scores.std()*100:.1f}%")
 
-    # STEP 7: Train final SVM
-    # CHANGE 5: C reduced from 10 -> 1.0.
-    # C=10 minimises training errors aggressively, shrinking the margin and
-    # memorising noise. C=1.0 allows more margin slack and generalises better
-    # at the cost of a slightly lower training accuracy.
     print("\nTraining SVM (C=1.0, RBF kernel)...")
     svm = SVC(
-        kernel='rbf',
-        C=1.0,            # was 10 - reduced to prevent overfitting
-        gamma='scale',
-        class_weight='balanced',
-        probability=True,
-        random_state=42
+        kernel='rbf', C=1.0, gamma='scale',
+        class_weight='balanced', probability=True, random_state=42
     )
     svm.fit(X_train_pca, y_train)
     joblib.dump(svm, 'svm_model.joblib')
 
-    # STEP 8: Evaluate
     y_train_pred = svm.predict(X_train_pca)
     y_val_pred   = svm.predict(X_val_pca)
     y_test_pred  = svm.predict(X_test_pca)
@@ -201,7 +139,6 @@ def main():
     print(classification_report(y_test, y_test_pred,
                                 target_names=['Real', 'Deepfake', 'AI-Gen']))
 
-    # STEP 9: Save training history
     history = {
         'train_accuracy':    train_acc,
         'val_accuracy':      val_acc,
@@ -222,9 +159,9 @@ def main():
         json.dump(history, f, indent=2, default=str)
 
     print("\nFiles saved:")
-    print("  svm_model.joblib        (trained SVM)")
-    print("  scaler.joblib           (StandardScaler)")
-    print("  pca.joblib              (PCA 1344->100)")
+    print("  svm_model.joblib")
+    print("  scaler.joblib")
+    print("  pca.joblib")
     print("  feature_extractor.pth")
     print("  features_X.npy / features_y.npy")
     print("  training_history.json")

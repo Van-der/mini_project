@@ -1,6 +1,6 @@
-# Multi-Branch Deepfake and AI-Generated Face Detection
+# Deepfake & AI-Generated Face Detection
 
-A **3-class classification model** to detect and distinguish between **Real faces**, **Deepfake faces**, and **AI-Generated faces** using a dual-branch neural network combining RGB spatial features with frequency domain (FFT) analysis.
+A **3-class image classifier** that distinguishes between **Real**, **Deepfake**, and **AI-Generated** faces using a dual-branch feature extractor combining spatial (RGB) and frequency (FFT) information, followed by an SVM classifier.
 
 ![Confusion Matrix](svm_model/confusion_matrix_svm.png)
 
@@ -11,204 +11,213 @@ A **3-class classification model** to detect and distinguish between **Real face
 | Property | Value |
 |----------|-------|
 | **Institution** | Sree Chitra Thirunal College of Engineering (SCTCE) |
-| **Course** | B.Tech CSE - AI & ML Specialization |
+| **Course** | B.Tech CSE — AI & ML Specialization |
 | **Project Type** | Mini-project |
 | **Date** | February 2026 |
 
-### Key Features
-- **Multi-class classification:** Real / Deepfake / AI-Generated
-- **Dual-branch architecture:** EfficientNet-B0 (RGB) + FFT frequency analysis
-- **Two model variants:** SVM (classical ML) and MLP (deep learning)
-- **MTCNN preprocessing:** Robust face detection and alignment
-- **PCA dimensionality reduction:** 1344 -> 100 components (anti-overfitting)
-- **Explainability:** Grad-CAM visualizations for model interpretability
-- **Streamlit UI:** Interactive web app for image upload and analysis
-- **Docker support:** Reproducible containerized environment
-
----
-
-## Recent Updates
-
-### v3.0 - Overfitting Fix + Streamlit UI (March 2026)
-
-**Overfitting fixes:**
-- Fixed feature extraction to use eval mode (no augmentation) — previously heavy random augmentation during extraction inflated AI-Gen feature diversity and biased the model
-- Added PCA (1344 -> 100 components) to prevent RBF-SVM overfitting on high-dimensional features
-- Reduced SVM C from 10 -> 1.0 for a wider, more generalisable decision boundary
-- Replaced single 80/20 split with a proper 70/15/15 train/val/test split — the previous "97.2%" was measured on training data
-- Added 5-fold cross-validation for honest generalisation estimates
-
-**New files:**
-- `inference.py` — clean backend with two independent functions: `predict_image()` and `generate_gradcam()`
-- `app.py` — Streamlit web UI (image upload, confidence scores, Grad-CAM overlay)
-
-### v2.0 - SVM Model Addition (February 2026)
-- Added SVM-based classifier using frozen EfficientNet features
-- Expanded AI-Gen dataset from 50 to 250 images (scraped from thispersondoesnotexist.com)
-- Reorganized project into `mlp_model/` and `svm_model/` folders
+**Problem statement:** With the rise of generative AI, distinguishing real faces from deepfakes and AI-synthesized faces is increasingly difficult for humans. This project builds a lightweight, interpretable classifier that handles all three categories simultaneously.
 
 ---
 
 ## Architecture
 
+The pipeline has two stages: a **frozen feature extractor** (no training), and a trained **SVM classifier**.
+
 ```
-Input Image (224x224x3)
-         |
-         +------------------+
-         |                  |
-    [RGB Branch]       [FFT Branch]
-         |                  |
-  EfficientNet-B0     2D FFT Magnitude
-   (pretrained,        (Pooled features)
-    frozen)                 |
-         |            64-dim features
-   1280-dim features        |
-         |                  |
-         +------ Concat ----+
-                   |
-            1344-dim vector
-                   |
-            [StandardScaler]
-                   |
-              [PCA -> 100]
-                   |
-         +---------+---------+
-         |                   |
-    [SVM Model]         [MLP Model]
-   C=1.0, RBF            (PyTorch)
-   (sklearn)                 |
-         |            3-class output
-   3-class output
+Input Image (any size)
+        |
+   [MTCNN Face Detection]  ← detects & crops face with 20px padding
+        |
+  224 × 224 × 3 crop
+        |
+        +──────────────────────────+
+        |                          |
+  [RGB Branch]               [FFT Branch]
+        |                          |
+ EfficientNet-B0           Grayscale conversion
+  (pretrained,              → 2D FFT magnitude
+   frozen weights)          → log1p scaling
+        |                    → 8×8 adaptive avg pool
+  1280-dim vector                  |
+                             64-dim vector
+        |                          |
+        +────────── concat ────────+
+                       |
+                 1344-dim vector
+                       |
+               [StandardScaler]
+                       |
+              [PCA: 1344 → 100]
+                       |
+              [SVM: RBF, C=1.0]
+               class_weight=balanced
+                       |
+          Real / Deepfake / AI-Generated
 ```
+
+### Why dual-branch?
+
+- **RGB branch (EfficientNet-B0):** Captures spatial artifacts — blurring, texture inconsistencies, and blending seams common in deepfakes.
+- **FFT branch:** Captures frequency-domain artifacts — GAN-generated faces often leave periodic patterns in the frequency spectrum that are invisible to the naked eye.
+- **Frozen weights:** EfficientNet is used as a feature extractor only (ImageNet pretrained). No fine-tuning — keeps training fast and avoids overfitting on the small dataset.
+
+### Why SVM over a full neural network?
+
+- Dataset is small (~800 images). A deep classifier would overfit badly.
+- SVM with an RBF kernel generalizes well on compact, PCA-reduced feature vectors.
+- Faster training (~30 sec vs ~10 min for MLP), no GPU needed at inference.
+- Course requirement: classical ML classifier on top of learned features.
+
+---
+
+## Dataset
+
+| Class | Count | Source |
+|-------|-------|--------|
+| **Real** | 300 | DFGC 2021 (250) + Nyakura dataset (50) |
+| **Deepfake** | 250 | DFGC 2021 fake_baseline |
+| **AI-Generated** | 250 | Nyakura (50) + thispersondoesnotexist.com (200) |
+| **Total** | **800** | Mixed sources |
+
+All images were preprocessed with **MTCNN** (Multi-task Cascaded CNN) to detect and crop faces before training, ensuring the model learns from face regions only.
+
+**Train / Val / Test split:** 70% / 15% / 15% — stratified by class (each split has proportional class representation).
 
 ---
 
 ## Results
 
-### SVM Model (Recommended) — v3.0 Honest Evaluation
+### Honest Evaluation (held-out test set, never seen during training)
 
 | Metric | Value |
 |--------|-------|
 | **Train Accuracy** | 92.5% |
-| **Val Accuracy** | 81.7% |
-| **Test Accuracy (held-out)** | 80.0% |
-| **Overfit Gap (train - test)** | 12.5% |
-| **5-fold CV Mean** | 81.2% +/- 2.0% |
-| Real Precision / Recall | 0.80 / 0.62 |
-| Deepfake Precision / Recall | 0.74 / 0.82 |
-| AI-Gen Precision / Recall | 0.86 / 1.00 |
+| **Validation Accuracy** | 81.7% |
+| **Test Accuracy** | 80.0% |
+| **Overfit Gap (train − test)** | 12.5% |
+| **5-fold CV Mean** | 81.2% ± 2.0% |
 
-> Note: The previous v2.0 figure of 97.2% was evaluated on the full dataset including training samples and is not a valid generalisation metric.
+### Per-class performance (test set)
 
-### MLP Model (Original)
-| Metric | Value |
-|--------|-------|
-| **Validation Accuracy** | 94.2% |
-| Training Epochs | 20 |
+| Class | Precision | Recall | Notes |
+|-------|-----------|--------|-------|
+| Real | 0.80 | 0.62 | Harder to separate from high-quality deepfakes |
+| Deepfake | 0.74 | 0.82 | Good recall — most fakes caught |
+| AI-Generated | 0.86 | 1.00 | Distinctive frequency signature makes this easiest |
+
+**Observation:** AI-generated faces (from GANs/diffusion) leave strong FFT artifacts. Deepfakes are harder to classify correctly because they are built on real faces with localized edits.
+
+### What changed from the original v2.0 "97.2%" figure
+
+That figure was measured by running `evaluate_svm.py` on the entire dataset — including training samples. It was not a valid generalization metric. v3.0 fixes:
+
+1. Feature extraction in `eval` mode — no augmentation during extraction
+2. 70/15/15 stratified split — held-out test set
+3. PCA (1344 → 100) — prevents RBF-SVM from memorizing high-dimensional noise
+4. SVM `C` reduced from 10 → 1.0 — wider decision boundary, better generalization
+5. 5-fold cross-validation — independent estimate before touching the test set
+
+---
+
+## Explainability — Grad-CAM
+
+Grad-CAM hooks are registered on EfficientNet's `_conv_head` layer. The heatmap shows which spatial regions of the face the model weighted most heavily when making its decision.
+
+Typical patterns observed:
+- **Real:** Diffuse attention across the whole face
+- **Deepfake:** Strong focus on eye region, jaw line, and blending boundaries
+- **AI-Generated:** Attention often highlights background and hair (GAN artifacts)
 
 ---
 
 ## Project Structure
 
 ```
-MiniProject/
-|-- svm_model/                  # SVM-based classifier (Classical ML)
-|   |-- train_svm.py            # Feature extraction + SVM training
-|   |-- evaluate_svm.py         # Evaluation with confusion matrix
-|   |-- predict_svm.py          # Single image prediction (CLI)
-|   |-- gradcam_svm.py          # Grad-CAM visualization (CLI)
-|   |-- inference.py            # Backend: predict_image() + generate_gradcam()
-|   |-- app.py                  # Streamlit web UI
-|   `-- README.md               # SVM model documentation
-|
-|-- mlp_model/                  # MLP-based classifier (Deep Learning)
-|   |-- train_mlp.py            # End-to-end training
-|   |-- evaluate_mlp.py         # Evaluation script
-|   |-- gradcam_mlp.py          # Grad-CAM visualization
-|   `-- README.md               # MLP model documentation
-|
-|-- dataset/
-|   |-- cropped_dataset/        # MTCNN-preprocessed face images
-|   |   |-- real/               # 300 images
-|   |   |-- deepfake/           # 250 images
-|   |   `-- ai_gen/             # 250 images
-|   `-- download_aigen.py       # Script to download AI-gen faces
-|
-|-- augmentdatting.py           # Dataset class (mode='train'/'eval')
-|-- Dockerfile                  # Docker container definition
-|-- requirements.txt            # Python dependencies
-`-- README.md                   # This file
+mini_project/
+├── svm_model/                  ← Main model (active pipeline)
+│   ├── app.py                  ← Streamlit web UI (entry point)
+│   ├── inference.py            ← predict_image() + generate_gradcam()
+│   ├── train_svm.py            ← FeatureExtractor class + training script
+│   ├── evaluate_svm.py         ← Confusion matrix + per-class report
+│   ├── predict_svm.py          ← CLI: single image prediction
+│   ├── gradcam_svm.py          ← CLI: Grad-CAM visualization
+│   └── README.md
+│
+├── dataset/
+│   ├── cropped_dataset/        ← MTCNN-preprocessed face images
+│   │   ├── real/               (300 images)
+│   │   ├── deepfake/           (250 images)
+│   │   └── ai_gen/             (250 images)
+│   ├── mtcnn_preprocessing.py  ← Face detection + crop pipeline
+│   └── download_aigen.py       ← Script used to scrape AI-gen faces
+│
+├── augmentdatting.py           ← BalancedFaceDataset (train/eval modes)
+├── requirements.txt
+├── Dockerfile
+└── README.md
 ```
 
----
+**Inference dependency chain:**
+`app.py` → `inference.py` → `train_svm.py` (FeatureExtractor) → pretrained weights
 
-## Dataset Composition
+### Saved model files (after training)
 
-| Class | Count | Source |
-|-------|-------|--------|
-| **Real** | 300 | DFGC (250) + Nyakura (50) |
-| **Deepfake** | 250 | DFGC fake_baseline |
-| **AI-Generated** | 250 | Nyakura (50) + thispersondoesnotexist.com (200) |
-| **Total** | **800** | Mixed sources |
-
-**Split (v3.0):** 70% train (560) / 15% val (120) / 15% test (120) — stratified
+| File | Contents |
+|------|----------|
+| `svm_model/feature_extractor.pth` | Frozen EfficientNet-B0 weights |
+| `svm_model/scaler.joblib` | Fitted StandardScaler |
+| `svm_model/pca.joblib` | Fitted PCA (1344 → 100) |
+| `svm_model/svm_model.joblib` | Trained SVM classifier |
 
 ---
 
 ## How to Run
 
-### Prerequisites
+### Install dependencies
+
 ```bash
 pip install -r requirements.txt
 pip install streamlit
 ```
 
-### Option 1: Streamlit Web UI (Recommended)
+### Option 1: Streamlit Web UI
 
 ```bash
 cd svm_model
 streamlit run app.py
 ```
 
-Upload any face image in the browser. The app runs prediction and Grad-CAM simultaneously and displays:
-- Predicted class and confidence score
-- Per-class probability bars
-- Grad-CAM heatmap overlay
+Upload any face image. The app:
+1. Detects and crops the face using MTCNN
+2. Extracts EfficientNet + FFT features
+3. Runs the SVM classifier
+4. Displays predicted class, confidence scores, and Grad-CAM overlay — all in one view
 
-### Option 2: SVM Model (CLI)
+### Option 2: CLI — single image prediction
 
 ```bash
 cd svm_model
-
-# Train
-python train_svm.py
-
-# Evaluate (confusion matrix)
-python evaluate_svm.py
-
-# Predict on a single image
 python predict_svm.py path/to/image.jpg
+```
 
-# Grad-CAM visualization
+### Option 3: CLI — Grad-CAM visualization
+
+```bash
+cd svm_model
 python gradcam_svm.py path/to/image.jpg
 ```
 
-### Option 3: MLP Model (CLI)
+Saves `gradcam_svm_result.png` (4-panel: input → face crop → heatmap → overlay).
+
+### Option 4: Retrain from scratch
 
 ```bash
-cd mlp_model
-
-# Train
-python train_mlp.py
-
-# Evaluate
-python evaluate_mlp.py
-
-# Grad-CAM visualization
-python gradcam_mlp.py path/to/image.jpg
+cd svm_model
+python train_svm.py       # extracts features, trains SVM, saves model files
+python evaluate_svm.py    # generates confusion matrix
 ```
 
-### Option 4: Docker
+### Option 5: Docker
 
 ```bash
 docker build -t deepfake-detector .
@@ -217,55 +226,26 @@ docker run -v ${PWD}:/app deepfake-detector python svm_model/train_svm.py
 
 ---
 
-## Model Comparison
-
-| Aspect | SVM Model (v3.0) | MLP Model |
-|--------|-----------------|-----------|
-| Honest Test Accuracy | **80.0%** | 94.2% (on train set) |
-| Overfit Gap | 12.5% | Unknown |
-| Training | ~30 sec | ~10 min |
-| ML Course Compliant | Yes | No |
-| GPU Required | Feature extraction only | Training |
-| Web UI | Yes (Streamlit) | No |
-| Interpretability | Grad-CAM + PCA | Grad-CAM |
-
----
-
-## Project Status
-
-| Phase | Status |
-|-------|--------|
-| Data Collection | 800 images |
-| MTCNN Preprocessing | Completed |
-| SVM Model (v3.0) | 80% honest test accuracy |
-| Overfitting fixes | PCA + C=1.0 + eval mode + 70/15/15 split |
-| MLP Model | 94.2% (train-set evaluation) |
-| Evaluation | Confusion matrices |
-| Grad-CAM | Both models |
-| Streamlit UI | Completed |
-| Documentation | Updated |
-
----
-
 ## Acknowledgements
 
-### Dataset Sources
-- **DFGC 2021** - Deepfake Game Competition (IJCB 2021)
-- **Nyakura AI_Human_Face_Detection** - Hugging Face
-- **thispersondoesnotexist.com** - AI-generated faces
+**Dataset sources:**
+- DFGC 2021 — Deepfake Game Competition (IJCB 2021)
+- Nyakura AI_Human_Face_Detection — Hugging Face
+- thispersondoesnotexist.com — StyleGAN2-generated faces
 
-### Libraries
-- PyTorch, EfficientNet-PyTorch, scikit-learn
-- MTCNN, Albumentations, OpenCV, Streamlit
+**Libraries:**
+- PyTorch, EfficientNet-PyTorch — feature extraction backbone
+- scikit-learn — SVM, PCA, StandardScaler
+- facenet-pytorch (MTCNN) — face detection
+- Streamlit — web UI
+- OpenCV, Albumentations, Pillow — image processing
 
 ---
 
 ## License
 
-This project is for **educational purposes only**.
-
-**Disclaimer:** Deepfake detection research involves sensitive data. Users should be aware of ethical implications.
+Educational purposes only. Deepfake detection research involves sensitive data — users should be aware of the ethical implications of this technology.
 
 ---
 
-**Last Updated:** March 2026
+*Last updated: May 2026*
